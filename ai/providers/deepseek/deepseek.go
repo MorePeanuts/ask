@@ -208,8 +208,10 @@ func (cm *ChatModel) createRequest(
 		Temperature: derefOrZero(options.Temperature),
 		TopP:        derefOrZero(options.TopP),
 		Stop:        options.StopWords,
-		Thinking:    &ds.ThinkingConfig{Type: cm.conf.ThinkingConfig},
 		ExtraFields: specOpts.extraFields,
+	}
+	if cm.conf.ThinkingConfig != "" {
+		req.Thinking = &ds.ThinkingConfig{Type: cm.conf.ThinkingConfig}
 	}
 
 	cbInput := &model.CallbackInput{
