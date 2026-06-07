@@ -19,8 +19,10 @@ import (
 	"github.com/MorePeanuts/ask/ai/schema"
 )
 
-const weatherEndpoint = "http://wttr.in/%s?format=j1"
-const maxAgentRounds = 5
+const (
+	weatherEndpoint = "http://wttr.in/%s?format=j1"
+	maxAgentRounds  = 5
+)
 
 var weatherHTTPClient = &http.Client{Timeout: 10 * time.Second}
 
@@ -66,7 +68,7 @@ func main() {
 		schema.UserMessage("请调用天气工具查询北京当前的天气，并用一句话告诉我适合穿什么衣服。"),
 	}
 
-	for round := 0; round < maxAgentRounds; round++ {
+	for round := range maxAgentRounds {
 		message, err := chatModel.Generate(
 			ctx,
 			messages,
@@ -91,7 +93,7 @@ func main() {
 			if err != nil {
 				result = fmt.Sprintf("工具调用失败：%v", err)
 			}
-			fmt.Printf("[tool] %s\n", result)
+			fmt.Printf("[tool result] %s\n", result)
 			messages = append(messages, schema.ToolMessage(result, call.Function.Name, call.ID))
 		}
 	}
@@ -205,6 +207,7 @@ func newLoggingCallback() callbacks.Handler {
 				len(modelInput.Messages),
 				len(modelInput.Tools),
 			)
+			fmt.Println(modelInput.Messages[len(modelInput.Messages)-1])
 			return ctx
 		}).
 		OnEndFn(func(ctx context.Context, info *callbacks.RunInfo, output callbacks.CallbackOutput) context.Context {
@@ -219,6 +222,7 @@ func newLoggingCallback() callbacks.Handler {
 				modelOutput.TokenUsage.TotalTokens,
 				modelOutput.Message != nil && modelOutput.Message.ReasoningContent != "",
 			)
+			fmt.Println(modelOutput.Message)
 			return ctx
 		}).
 		OnErrorFn(func(ctx context.Context, info *callbacks.RunInfo, err error) context.Context {

@@ -82,6 +82,7 @@ type ChatModelConfig struct {
 	ResponseFormatType ResponseFormatType `json:"response_format_type,omitempty"`
 
 	// ThinkingConfig controls the switch between thinking and non-thinking mode.
+	// Possible values: enabled, disabled
 	ThinkingConfig string `json:"thinking_config,omitempty"`
 }
 
