@@ -32,7 +32,7 @@ type deepseekOptions struct {
 //	        },
 //	    }),
 //	)
-func WithExtralFields(extraFields map[string]any) model.Option {
+func WithExtraFields(extraFields map[string]any) model.Option {
 	return model.WrapImplSpecificOptFn(func(o *deepseekOptions) {
 		o.extraFields = extraFields
 	})

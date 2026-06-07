@@ -245,7 +245,7 @@ func (cm *ChatModel) Stream(ctx context.Context, input []*schema.Message, opts .
 			if lastEmptyMsg != nil {
 				concatMsg, concatErr := schema.ConcatMessages([]*schema.Message{lastEmptyMsg, msg})
 				if concatErr != nil {
-					_ = sw.Send(nil, fmt.Errorf("failed to concatenate stream messages: %w", &concatErr))
+					_ = sw.Send(nil, fmt.Errorf("failed to concatenate stream messages: %w", concatErr))
 					return
 				}
 
@@ -298,7 +298,7 @@ func (cm *ChatModel) GetType() string {
 }
 
 func (cm *ChatModel) createRequest(
-	ctx context.Context,
+	_ context.Context,
 	input []*schema.Message,
 	opts ...model.Option,
 ) (*ds.ChatCompletionRequest, *model.CallbackInput, error) {
@@ -405,9 +405,6 @@ func resolveStreamResponse(resp *ds.StreamChatCompletionResponse) (msg *schema.M
 			continue
 		}
 
-		if err != nil {
-			return nil, false, fmt.Errorf("failed to extract log probs: %w", err)
-		}
 		found = true
 		msg = &schema.Message{
 			Role:      toMessageRole(choice.Delta.Role),

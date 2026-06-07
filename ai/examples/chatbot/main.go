@@ -85,7 +85,7 @@ func main() {
 		stream, err := models[*thinking].Stream(
 			ctx,
 			messages,
-			deepseek.WithExtralFields(map[string]any{
+			deepseek.WithExtraFields(map[string]any{
 				"stream_options": map[string]any{"include_usage": true},
 			}),
 		)
