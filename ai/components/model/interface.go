@@ -8,6 +8,7 @@ import (
 
 type BaseChatModel interface {
 	Generate(ctx context.Context, input []*schema.Message, opts ...Option) (*schema.Message, error)
+	Stream(ctx context.Context, input []*schema.Message, opts ...Option) (*schema.StreamReader[*schema.Message], error)
 }
 
 type ChatModelWithTools interface {

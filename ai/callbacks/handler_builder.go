@@ -1,11 +1,16 @@
 package callbacks
 
-import "context"
+import (
+	"context"
+
+	"github.com/MorePeanuts/ask/ai/schema"
+)
 
 type HandlerBuilder struct {
-	onStartFn func(ctx context.Context, info *RunInfo, input CallbackInput) context.Context
-	onEndFn   func(ctx context.Context, info *RunInfo, output CallbackOutput) context.Context
-	onErrorFn func(ctx context.Context, info *RunInfo, err error) context.Context
+	onStartFn               func(ctx context.Context, info *RunInfo, input CallbackInput) context.Context
+	onEndFn                 func(ctx context.Context, info *RunInfo, output CallbackOutput) context.Context
+	onErrorFn               func(ctx context.Context, info *RunInfo, err error) context.Context
+	onEndWithStreamOutputFn func(ctx context.Context, info *RunInfo, output *schema.StreamReader[CallbackOutput]) context.Context
 }
 
 // NewHandlerBuilder creates and returns a new HandlerBuilder instance.
@@ -38,6 +43,14 @@ func (hb *HandlerBuilder) OnErrorFn(
 	return hb
 }
 
+// OnEndWithStreamOutputFn sets the handler for the streaming end timing.
+func (hb *HandlerBuilder) OnEndWithStreamOutputFn(
+	fn func(ctx context.Context, info *RunInfo, output *schema.StreamReader[CallbackOutput]) context.Context,
+) *HandlerBuilder {
+	hb.onEndWithStreamOutputFn = fn
+	return hb
+}
+
 // Build returns a Handler with the functions set in the builder.
 func (hb *HandlerBuilder) Build() Handler {
 	return &handlerImpl{*hb}
@@ -64,6 +77,12 @@ func (h *handlerImpl) OnError(ctx context.Context, info *RunInfo, err error) con
 	return h.onErrorFn(ctx, info, err)
 }
 
+func (h *handlerImpl) OnEndWithStreamOutput(ctx context.Context, info *RunInfo,
+	output *schema.StreamReader[CallbackOutput],
+) context.Context {
+	return h.onEndWithStreamOutputFn(ctx, info, output)
+}
+
 func (h *handlerImpl) Needed(_ context.Context, _ *RunInfo, timing CallbackTiming) bool {
 	switch timing {
 	case TimingOnStart:
@@ -72,6 +91,8 @@ func (h *handlerImpl) Needed(_ context.Context, _ *RunInfo, timing CallbackTimin
 		return h.onEndFn != nil
 	case TimingOnError:
 		return h.onErrorFn != nil
+	case TimingOnEndWithStreamOutput:
+		return h.onEndWithStreamOutputFn != nil
 	default:
 		return false
 	}

@@ -13,6 +13,7 @@ import (
 	"context"
 
 	"github.com/MorePeanuts/ask/ai/components"
+	"github.com/MorePeanuts/ask/ai/schema"
 )
 
 // RunInfo represents the information returned each time a callback is triggered, describing who triggered the callback.
@@ -33,6 +34,7 @@ type Handler interface {
 	OnStart(ctx context.Context, info *RunInfo, input CallbackInput) context.Context
 	OnEnd(ctx context.Context, info *RunInfo, output CallbackOutput) context.Context
 	OnError(ctx context.Context, info *RunInfo, err error) context.Context
+	OnEndWithStreamOutput(ctx context.Context, info *RunInfo, output *schema.StreamReader[CallbackOutput]) context.Context
 }
 
 type CallbackTiming uint8
@@ -45,6 +47,11 @@ const (
 	TimingOnEnd
 	// TimingOnError fires when the component returns a non-nil error.
 	TimingOnError
+	// TimingOnEndWithStreamOutput fires after the component returns a
+	// streaming output (Stream / Transform paradigms). The handler receives a
+	// copy of the output stream and must close it after reading. This is
+	// typically where you implement streaming metrics or logging.
+	TimingOnEndWithStreamOutput
 )
 
 type TimingChecker interface {

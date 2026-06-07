@@ -2,7 +2,10 @@ package deepseek
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -178,6 +181,114 @@ func (cm *ChatModel) Generate(ctx context.Context, input []*schema.Message, opts
 	return outMsg, nil
 }
 
+func (cm *ChatModel) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (outStream *schema.StreamReader[*schema.Message], err error) {
+	ctx = callbacks.EnsureRunInfo(ctx, cm.GetType(), components.ComponentOfChatModel)
+
+	req, cbInput, err := cm.createStreamRequest(ctx, input, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate request: %w", err)
+	}
+
+	ctx = callbacks.OnStart(ctx, cbInput)
+	defer func() {
+		if err != nil {
+			callbacks.OnError(ctx, err)
+		}
+	}()
+
+	stream, err := cm.cli.CreateChatCompletionStream(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create chat stream completion: %w", err)
+	}
+
+	sr, sw := schema.Pipe[*model.CallbackOutput](1)
+	go func() {
+		defer func() {
+			panicErr := recover()
+			_ = stream.Close()
+
+			if panicErr != nil {
+				_ = sw.Send(nil, newPanicErr(panicErr, debug.Stack()))
+			}
+
+			sw.Close()
+		}()
+
+		var lastEmptyMsg *schema.Message
+
+		for {
+			chunk, chunkErr := stream.Recv()
+			if errors.Is(chunkErr, io.EOF) {
+				if lastEmptyMsg != nil {
+					sw.Send(&model.CallbackOutput{
+						Message:    lastEmptyMsg,
+						Config:     cbInput.Config,
+						TokenUsage: lastEmptyMsg.ResponseMeta.Usage,
+					}, nil)
+				}
+				return
+			}
+
+			if chunkErr != nil {
+				_ = sw.Send(nil, fmt.Errorf("failed to receive stream chunk from DeepSeek: %w", chunkErr))
+				return
+			}
+
+			msg, found, err := resolveStreamResponse(chunk)
+			if err != nil {
+				_ = sw.Send(nil, fmt.Errorf("failed to receive stream chunk from DeepSeek: %w", chunkErr))
+			}
+			if !found {
+				continue
+			}
+
+			if lastEmptyMsg != nil {
+				concatMsg, concatErr := schema.ConcatMessages([]*schema.Message{lastEmptyMsg, msg})
+				if concatErr != nil {
+					_ = sw.Send(nil, fmt.Errorf("failed to concatenate stream messages: %w", &concatErr))
+					return
+				}
+
+				msg = concatMsg
+			}
+
+			if msg.Content == "" && len(msg.ToolCalls) == 0 && msg.ReasoningContent == "" {
+				lastEmptyMsg = msg
+				continue
+			}
+
+			lastEmptyMsg = nil
+
+			closed := sw.Send(&model.CallbackOutput{
+				Message:    msg,
+				Config:     cbInput.Config,
+				TokenUsage: msg.ResponseMeta.Usage,
+			}, nil)
+
+			if closed {
+				return
+			}
+		}
+	}()
+
+	ctx, newSr := callbacks.OnEndWithStreamOutput(ctx, schema.StreamReaderWithConvert(sr,
+		func(src *model.CallbackOutput) (callbacks.CallbackOutput, error) {
+			return src, nil
+		}))
+
+	outStream = schema.StreamReaderWithConvert(newSr,
+		func(src callbacks.CallbackOutput) (*schema.Message, error) {
+			s := src.(*model.CallbackOutput)
+			if s.Message == nil {
+				return nil, schema.ErrNoValue
+			}
+
+			return s.Message, nil
+		})
+
+	return outStream, nil
+}
+
 func (cm *ChatModel) WithTools(tools []*schema.ToolInfo) (model.ChatModelWithTools, error) {
 	return cm, nil
 }
@@ -263,6 +374,67 @@ func (cm *ChatModel) createRequest(
 	}
 
 	return req, cbInput, nil
+}
+
+func (cm *ChatModel) createStreamRequest(ctx context.Context, input []*schema.Message, opts ...model.Option) (*ds.StreamChatCompletionRequest, *model.CallbackInput, error) {
+	origReq, cbIn, err := cm.createRequest(ctx, input, opts...)
+	if err != nil {
+		return nil, nil, err
+	}
+	req := &ds.StreamChatCompletionRequest{
+		Stream:         true,
+		StreamOptions:  ds.StreamOptions{IncludeUsage: false},
+		Model:          origReq.Model,
+		Messages:       origReq.Messages,
+		MaxTokens:      origReq.MaxTokens,
+		Temperature:    origReq.Temperature,
+		TopP:           origReq.TopP,
+		ResponseFormat: origReq.ResponseFormat,
+		Stop:           origReq.Stop,
+		Tools:          origReq.Tools,
+		ExtraFields:    origReq.ExtraFields,
+		Thinking:       origReq.Thinking,
+	}
+	return req, cbIn, nil
+}
+
+func resolveStreamResponse(resp *ds.StreamChatCompletionResponse) (msg *schema.Message, found bool, err error) {
+	for _, choice := range resp.Choices {
+		// take 0 index as response, rewrite if needed
+		if choice.Index != 0 {
+			continue
+		}
+
+		if err != nil {
+			return nil, false, fmt.Errorf("failed to extract log probs: %w", err)
+		}
+		found = true
+		msg = &schema.Message{
+			Role:      toMessageRole(choice.Delta.Role),
+			Content:   choice.Delta.Content,
+			ToolCalls: toMessageToolCalls(choice.Delta.ToolCalls),
+			ResponseMeta: &schema.ResponseMeta{
+				FinishReason: choice.FinishReason,
+				Usage:        streamToTokenUsage(resp.Usage),
+			},
+		}
+		if len(choice.Delta.ReasoningContent) > 0 {
+			msg.ReasoningContent = choice.Delta.ReasoningContent
+		}
+
+		break
+	}
+
+	if resp.Usage != nil && !found {
+		msg = &schema.Message{
+			ResponseMeta: &schema.ResponseMeta{
+				Usage: streamToTokenUsage(resp.Usage),
+			},
+		}
+		found = true
+	}
+
+	return msg, found, nil
 }
 
 func toDeepSeekMessage(m *schema.Message) (*ds.ChatCompletionMessage, error) {
@@ -366,7 +538,26 @@ func toTokenUsage(usage *ds.Usage) *schema.TokenUsage {
 		PromptCacheHitTokens: usage.PromptCacheHitTokens,
 		CompletionTokens:     usage.CompletionTokens,
 		TotalTokens:          usage.TotalTokens,
+		ReasoningTokens:      usage.CompletionTokensDetails.ReasoningTokens,
 	}
+}
+
+func streamToTokenUsage(usage *ds.StreamUsage) *schema.TokenUsage {
+	if usage == nil {
+		return nil
+	}
+	if usage.PromptTokens == 0 &&
+		usage.CompletionTokens == 0 &&
+		usage.TotalTokens == 0 {
+		return nil
+	}
+	return toTokenUsage(&ds.Usage{
+		PromptTokens:            usage.PromptTokens,
+		PromptCacheHitTokens:    usage.PromptCacheHitTokens,
+		CompletionTokens:        usage.CompletionTokens,
+		TotalTokens:             usage.TotalTokens,
+		CompletionTokensDetails: usage.CompletionTokensDetails,
+	})
 }
 
 func toDeepSeekTools(tis []*schema.ToolInfo) ([]ds.Tool, error) {
@@ -474,4 +665,20 @@ func derefOrZero[T any](v *T) T {
 	}
 
 	return *v
+}
+
+type panicErr struct {
+	info  any
+	stack []byte
+}
+
+func (p *panicErr) Error() string {
+	return fmt.Sprintf("panic error: %v, \nstack: %s", p.info, string(p.stack))
+}
+
+func newPanicErr(info any, stack []byte) error {
+	return &panicErr{
+		info:  info,
+		stack: stack,
+	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/MorePeanuts/ask/ai/components"
+	"github.com/MorePeanuts/ask/ai/schema"
 )
 
 // InitCallbacks creates a new context with the given RunInfo and handlers,
@@ -109,6 +110,18 @@ func OnEnd[T any](ctx context.Context, output T) context.Context {
 	return ctx
 }
 
+// OnEndWithStreamOutput invokes the OnEndWithStreamOutput timing. Use this
+// when the component produces a streaming output (Stream / Transform
+// paradigms). stream copies are made per handler; each handler must close its copy.
+//
+// Returns the updated context and the StreamReader the component should return
+// to its caller.
+func OnEndWithStreamOutput[T any](ctx context.Context, output *schema.StreamReader[T]) (
+	nextCtx context.Context, newStreamReader *schema.StreamReader[T],
+) {
+	return On(ctx, output, OnEndWithStreamOutputHandle[T], TimingOnEndWithStreamOutput, false)
+}
+
 // OnError invokes the OnError timing for all registered handlers. Call this
 // when the component returns an error. Errors that occur mid-stream (after the
 // StreamReader has been returned) are NOT routed through OnError; they surface
@@ -174,10 +187,45 @@ func OnEndHandle[T any](ctx context.Context, output T, runInfo *RunInfo, handler
 	return ctx, output
 }
 
+func OnEndWithStreamOutputHandle[T any](ctx context.Context, output *schema.StreamReader[T],
+	runInfo *RunInfo, handlers []Handler,
+) (context.Context, *schema.StreamReader[T]) {
+	cpy := output.Copy
+
+	handle := func(ctx context.Context, handler Handler, out *schema.StreamReader[T]) context.Context {
+		out_ := schema.StreamReaderWithConvert(out, func(i T) (CallbackOutput, error) {
+			return i, nil
+		})
+		return handler.OnEndWithStreamOutput(ctx, runInfo, out_)
+	}
+
+	return OnWithStreamHandle(ctx, output, handlers, cpy, handle)
+}
+
 func OnErrorHandle(ctx context.Context, err error, runInfo *RunInfo, handlers []Handler) (context.Context, error) {
 	for _, handler := range handlers {
 		ctx = handler.OnError(ctx, runInfo, err)
 	}
 
 	return ctx, err
+}
+
+func OnWithStreamHandle[T any](
+	ctx context.Context,
+	inOut T,
+	handlers []Handler,
+	cpy func(int) []T,
+	handle func(context.Context, Handler, T) context.Context,
+) (context.Context, T) {
+	if len(handlers) == 0 {
+		return ctx, inOut
+	}
+
+	inOuts := cpy(len(handlers) + 1)
+
+	for i, handler := range handlers {
+		ctx = handle(ctx, handler, inOuts[i])
+	}
+
+	return ctx, inOuts[len(inOuts)-1]
 }
