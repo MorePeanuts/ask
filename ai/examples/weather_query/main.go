@@ -67,6 +67,7 @@ func main() {
 	messages := []*schema.Message{
 		schema.UserMessage("请调用天气工具查询北京当前的天气，并用一句话告诉我适合穿什么衣服。"),
 	}
+	fmt.Println(messages[0])
 
 	for round := range maxAgentRounds {
 		message, err := chatModel.Generate(
@@ -78,13 +79,14 @@ func main() {
 		if err != nil {
 			exitErr(err)
 		}
+		fmt.Println(message)
 		messages = append(messages, message)
 
 		if !continueAgentLoop(len(message.ToolCalls), round) {
 			if len(message.ToolCalls) > 0 {
 				exitErr(errors.New("达到最大工具调用轮数"))
 			}
-			fmt.Printf("\n[assistant] %s\n", message.Content)
+			// fmt.Printf("\n[assistant] %s\n", message.Content)
 			return
 		}
 
@@ -93,8 +95,8 @@ func main() {
 			if err != nil {
 				result = fmt.Sprintf("工具调用失败：%v", err)
 			}
-			fmt.Printf("[tool result] %s\n", result)
 			messages = append(messages, schema.ToolMessage(result, call.Function.Name, call.ID))
+			fmt.Println(messages[len(messages)-1])
 		}
 	}
 }
@@ -207,7 +209,6 @@ func newLoggingCallback() callbacks.Handler {
 				len(modelInput.Messages),
 				len(modelInput.Tools),
 			)
-			fmt.Println(modelInput.Messages[len(modelInput.Messages)-1])
 			return ctx
 		}).
 		OnEndFn(func(ctx context.Context, info *callbacks.RunInfo, output callbacks.CallbackOutput) context.Context {
@@ -222,7 +223,6 @@ func newLoggingCallback() callbacks.Handler {
 				modelOutput.TokenUsage.TotalTokens,
 				modelOutput.Message != nil && modelOutput.Message.ReasoningContent != "",
 			)
-			fmt.Println(modelOutput.Message)
 			return ctx
 		}).
 		OnErrorFn(func(ctx context.Context, info *callbacks.RunInfo, err error) context.Context {
