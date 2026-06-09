@@ -7,10 +7,11 @@ import (
 )
 
 type HandlerBuilder struct {
-	onStartFn               func(ctx context.Context, info *RunInfo, input CallbackInput) context.Context
-	onEndFn                 func(ctx context.Context, info *RunInfo, output CallbackOutput) context.Context
-	onErrorFn               func(ctx context.Context, info *RunInfo, err error) context.Context
-	onEndWithStreamOutputFn func(ctx context.Context, info *RunInfo, output *schema.StreamReader[CallbackOutput]) context.Context
+	onStartFn                func(ctx context.Context, info *RunInfo, input CallbackInput) context.Context
+	onEndFn                  func(ctx context.Context, info *RunInfo, output CallbackOutput) context.Context
+	onErrorFn                func(ctx context.Context, info *RunInfo, err error) context.Context
+	onStartWithStreamInputFn func(ctx context.Context, info *RunInfo, input *schema.StreamReader[CallbackInput]) context.Context
+	onEndWithStreamOutputFn  func(ctx context.Context, info *RunInfo, output *schema.StreamReader[CallbackOutput]) context.Context
 }
 
 // NewHandlerBuilder creates and returns a new HandlerBuilder instance.
@@ -43,7 +44,20 @@ func (hb *HandlerBuilder) OnErrorFn(
 	return hb
 }
 
-// OnEndWithStreamOutputFn sets the handler for the streaming end timing.
+// OnStartWithStreamInputFn sets the handler for the component start timing
+// when its input is a stream. The handler owns the stream copy it receives and
+// must close it after reading.
+func (hb *HandlerBuilder) OnStartWithStreamInputFn(
+	fn func(ctx context.Context, info *RunInfo, input *schema.StreamReader[CallbackInput]) context.Context,
+) *HandlerBuilder {
+	hb.onStartWithStreamInputFn = fn
+	return hb
+}
+
+// OnEndWithStreamOutputFn sets the handler for the component end timing when
+// its output is a stream. The handler owns the stream copy it receives and must
+// close it after reading. This timing does not indicate that the stream has
+// reached EOF.
 func (hb *HandlerBuilder) OnEndWithStreamOutputFn(
 	fn func(ctx context.Context, info *RunInfo, output *schema.StreamReader[CallbackOutput]) context.Context,
 ) *HandlerBuilder {
@@ -77,6 +91,12 @@ func (h *handlerImpl) OnError(ctx context.Context, info *RunInfo, err error) con
 	return h.onErrorFn(ctx, info, err)
 }
 
+func (h *handlerImpl) OnStartWithStreamInput(ctx context.Context, info *RunInfo,
+	input *schema.StreamReader[CallbackInput],
+) context.Context {
+	return h.onStartWithStreamInputFn(ctx, info, input)
+}
+
 func (h *handlerImpl) OnEndWithStreamOutput(ctx context.Context, info *RunInfo,
 	output *schema.StreamReader[CallbackOutput],
 ) context.Context {
@@ -91,6 +111,8 @@ func (h *handlerImpl) Needed(_ context.Context, _ *RunInfo, timing CallbackTimin
 		return h.onEndFn != nil
 	case TimingOnError:
 		return h.onErrorFn != nil
+	case TimingOnStartWithStreamInput:
+		return h.onStartWithStreamInputFn != nil
 	case TimingOnEndWithStreamOutput:
 		return h.onEndWithStreamOutputFn != nil
 	default:

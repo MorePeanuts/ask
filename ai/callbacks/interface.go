@@ -1,5 +1,5 @@
-// Package callbacks provide unified lifecycle hooks for the execution process of components, nodes, etc.,
-// allowing users to insert custom logic at moments such as start, end, and error occurrences.
+// Package callbacks provides unified lifecycle hooks for components, nodes,
+// and other executable units.
 //
 // Typical use cases include:
 //
@@ -7,6 +7,19 @@
 // 2. Measuring model invocation time;
 // 3. Logging token usage;
 // 4. Integrating tracing metrics;
+//
+// Start and end refer to the component call boundary, not to the lifetime of a
+// stream carried across that boundary. For a non-streaming input or output,
+// components use OnStart and OnEnd. When the input or output itself is a
+// stream, components use OnStartWithStreamInput or OnEndWithStreamOutput
+// instead.
+//
+// A streaming callback runs when the stream becomes available at the
+// corresponding component boundary. It does not run when the first item is
+// received or when the stream reaches EOF. Each handler receives an independent
+// stream copy and is responsible for consuming and closing it. Handlers should
+// normally start a goroutine to consume their copy and return promptly so they
+// do not delay the component or its caller from consuming their own copy.
 package callbacks
 
 import (
@@ -34,6 +47,7 @@ type Handler interface {
 	OnStart(ctx context.Context, info *RunInfo, input CallbackInput) context.Context
 	OnEnd(ctx context.Context, info *RunInfo, output CallbackOutput) context.Context
 	OnError(ctx context.Context, info *RunInfo, err error) context.Context
+	OnStartWithStreamInput(ctx context.Context, info *RunInfo, input *schema.StreamReader[CallbackInput]) context.Context
 	OnEndWithStreamOutput(ctx context.Context, info *RunInfo, output *schema.StreamReader[CallbackOutput]) context.Context
 }
 
@@ -47,9 +61,15 @@ const (
 	TimingOnEnd
 	// TimingOnError fires when the component returns a non-nil error.
 	TimingOnError
-	// TimingOnEndWithStreamOutput fires after the component returns a
-	// streaming output (Stream / Transform paradigms). The handler receives a
-	// copy of the output stream and must close it after reading. This is
+	// TimingOnStartWithStreamInput fires at the component start boundary when
+	// its streaming input becomes available (Collect / Transform paradigms).
+	// It does not indicate that stream consumption has started. The handler
+	// receives a copy of the input stream and must close it after reading.
+	TimingOnStartWithStreamInput
+	// TimingOnEndWithStreamOutput fires at the component end boundary when its
+	// streaming output becomes available (Stream / Transform paradigms). It
+	// does not indicate that the stream has reached EOF. The handler receives
+	// a copy of the output stream and must close it after reading. This is
 	// typically where you implement streaming metrics or logging.
 	TimingOnEndWithStreamOutput
 )

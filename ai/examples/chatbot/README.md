@@ -5,7 +5,11 @@
 - 流式输出 reasoning 和最终回答；
 - 保留上下文的多轮对话；
 - 启动时或对话中开启、关闭思考模式；
-- 在流结束 callback 中输出 token 用量。
+- 通过流式输出 callback 的独立流副本读取并输出 token 用量。
+
+这里的流式输出 callback 在模型返回输出流时触发，而不是在输出流到达
+`io.EOF` 时触发。callback 会并发消费自己的流副本；主流程消费完调用方的
+流副本后，等待 callback 完成 token 用量统计。
 
 ```bash
 export DEEPSEEK_API_KEY="your-api-key"

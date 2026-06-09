@@ -5,6 +5,7 @@ import (
 
 	"github.com/MorePeanuts/ask/ai/components"
 	"github.com/MorePeanuts/ask/ai/schema"
+	"github.com/MorePeanuts/ask/ai/utils"
 )
 
 // InitCallbacks creates a new context with the given RunInfo and handlers,
@@ -110,12 +111,49 @@ func OnEnd[T any](ctx context.Context, output T) context.Context {
 	return ctx
 }
 
-// OnEndWithStreamOutput invokes the OnEndWithStreamOutput timing. Use this
-// when the component produces a streaming output (Stream / Transform
-// paradigms). stream copies are made per handler; each handler must close its copy.
+// OnStartWithStreamInput invokes the start timing for a component whose input
+// is a stream (Collect / Transform paradigms). It is the streaming-input
+// alternative to [OnStart]; do not call both for the same component invocation.
 //
-// Returns the updated context and the StreamReader the component should return
-// to its caller.
+// This function runs when the input stream becomes available at the component
+// start boundary, before the component begins consuming it. It does not wait
+// for the first item and does not indicate that stream consumption has started.
+//
+// The framework copies the stream so every selected handler and the component
+// receive independent readers. A handler owns its copy and must close it after
+// reading. A handler should normally start a goroutine to consume its copy and
+// return promptly; consuming the complete stream before returning delays the
+// component from consuming its copy and defeats streaming behavior.
+//
+// OnStartWithStreamInput returns the updated context and the reader the
+// component must use from then on. The original reader becomes unusable after
+// it is copied.
+func OnStartWithStreamInput[T any](ctx context.Context, input *schema.StreamReader[T]) (
+	nextCtx context.Context, newStreamReader *schema.StreamReader[T],
+) {
+	return On(ctx, input, OnStartWithStreamInputHandle[T], TimingOnStartWithStreamInput, true)
+}
+
+// OnEndWithStreamOutput invokes the end timing for a component whose output is
+// a stream (Stream / Transform paradigms). It is the streaming-output
+// alternative to [OnEnd]; do not call both for the same successful component
+// invocation.
+//
+// This function runs when the output stream becomes available at the component
+// end boundary, before the caller begins consuming it. Despite "End" in its
+// name, it does not indicate that the stream has reached EOF or has been
+// closed.
+//
+// The framework copies the stream so every selected handler and the caller
+// receive independent readers. A handler owns its copy and must close it after
+// reading. A handler should normally start a goroutine to consume its copy and
+// return promptly; consuming the complete stream before returning delays the
+// component from returning its caller-facing copy and defeats streaming
+// behavior.
+//
+// OnEndWithStreamOutput returns the updated context and the reader the
+// component must return to its caller. The original reader becomes unusable
+// after it is copied.
 func OnEndWithStreamOutput[T any](ctx context.Context, output *schema.StreamReader[T]) (
 	nextCtx context.Context, newStreamReader *schema.StreamReader[T],
 ) {
@@ -185,6 +223,23 @@ func OnEndHandle[T any](ctx context.Context, output T, runInfo *RunInfo, handler
 	}
 
 	return ctx, output
+}
+
+func OnStartWithStreamInputHandle[T any](ctx context.Context, input *schema.StreamReader[T],
+	runInfo *RunInfo, handlers []Handler,
+) (context.Context, *schema.StreamReader[T]) {
+	handlers = utils.Reverse(handlers)
+
+	cpy := input.Copy
+
+	handle := func(ctx context.Context, handler Handler, in *schema.StreamReader[T]) context.Context {
+		in_ := schema.StreamReaderWithConvert(in, func(i T) (CallbackInput, error) {
+			return i, nil
+		})
+		return handler.OnStartWithStreamInput(ctx, runInfo, in_)
+	}
+
+	return OnWithStreamHandle(ctx, input, handlers, cpy, handle)
 }
 
 func OnEndWithStreamOutputHandle[T any](ctx context.Context, output *schema.StreamReader[T],
