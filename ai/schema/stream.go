@@ -337,10 +337,19 @@ func (sr *StreamReader[T]) toStream() *stream[T] {
 type readerType int
 
 const (
+	// readerTypeStream is channel based stream, created by [Pipe]
 	readerTypeStream readerType = iota
+	// readerTypeArray is array/slices based stream, created by [StreamReaderFromArray]
 	readerTypeArray
+	// readerTypeMultiStream is Multi-way merge stream, created by [MergeStreamReaders]
+	// and [MergeNamedStreamReaders]. Non-deterministic multiplexing across multiple stream channels
 	readerTypeMultiStream
+	// readerTypeWithConvert is stream with type conversion, created by [StreamReaderWithConvert].
+	// It wraps an [iStreamReader] object and applies the convert function to each element for type conversion.
 	readerTypeWithConvert
+	// readerTypeChild is a copyed stream, created by [StreamReader.Copy].
+	// Share a data source through [parentStreamReader], with each substream reading independently,
+	// using a linked list [cpStreamElement] to implement lazy copying.
 	readerTypeChild
 )
 

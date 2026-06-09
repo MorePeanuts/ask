@@ -290,7 +290,20 @@ func (cm *ChatModel) Stream(ctx context.Context, input []*schema.Message, opts .
 }
 
 func (cm *ChatModel) WithTools(tools []*schema.ToolInfo) (model.ChatModelWithTools, error) {
-	return cm, nil
+	if len(tools) == 0 {
+		return nil, errors.New("no tools to bind")
+	}
+	deepseekTools, err := toDeepSeekTools(tools)
+	if err != nil {
+		return nil, fmt.Errorf("convert to deepseek tools fail: %w", err)
+	}
+
+	tc := schema.ToolChoiceAllowed
+	ncm := *cm
+	ncm.tools = deepseekTools
+	ncm.rawTools = tools
+	ncm.toolChoice = &tc
+	return &ncm, nil
 }
 
 func (cm *ChatModel) GetType() string {
