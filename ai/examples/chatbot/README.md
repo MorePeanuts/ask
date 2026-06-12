@@ -65,6 +65,38 @@ OnEndWithStreamOutputFn(func(
 
 主流程和 callback goroutine 随后会并发消费各自的流副本。
 
+### 为什么 token usage 使用替换而不是累加
+
+流中携带的 `TokenUsage` 表示整个请求截至当前时刻或最终的累计用量快照，不是
+当前 chunk 新增的 token 数量。开启 `include_usage` 后，DeepSeek 通常在最后一个
+不包含正文的 chunk 中返回完整用量：
+
+```text
+内容 chunk 1：TokenUsage = nil
+内容 chunk 2：TokenUsage = nil
+最终 usage chunk：TokenUsage = {prompt: 10, completion: 20, total: 30}
+```
+
+因此 handler 会保存最后一个有效快照：
+
+```go
+if modelOutput != nil && modelOutput.TokenUsage != nil {
+    usage = modelOutput.TokenUsage
+}
+```
+
+不能将不同 chunk 的 usage 累加。部分供应商可能在多个 chunk 中返回递增的累计
+快照：
+
+```text
+chunk 1：completion=5
+chunk 2：completion=10
+chunk 3：completion=15
+```
+
+最终正确值是 `15`；累加会错误地得到 `30`。如果需要兼容 usage 快照乱序，
+可以像 `schema.ConcatMessages` 一样对各字段取最大值，但仍然不应累加。
+
 ### 为什么主流程需要调用 wait
 
 goroutine 解决的是流副本必须并发消费的问题，`reporter.wait()` 解决的是本示例
